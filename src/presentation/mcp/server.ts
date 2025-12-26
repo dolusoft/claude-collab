@@ -101,8 +101,13 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
 
   // Setup notification when questions arrive
   hubClient.events.onQuestion = async (question) => {
-    // TODO: Send resource updated notification to Claude
-    // Need to check MCP SDK API for correct notification method
+    // Send resource updated notification to Claude
+    await server.notification({
+      method: 'notifications/resources/updated',
+      params: {
+        uri: 'inbox://questions',
+      },
+    });
 
     // Log for debugging
     console.error(`[📬 New Question] From: ${question.from.displayName}`);
