@@ -69,7 +69,7 @@ export class HubClient {
 
   constructor(
     private readonly options: HubClientOptions = {},
-    private readonly events: HubClientEvents = {}
+    public readonly events: HubClientEvents = {}
   ) {}
 
   /**

@@ -1,6 +1,6 @@
 {
   "name": "@dolusoft/claude-collab",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Real-time team collaboration between Claude Code terminals via MCP",
   "type": "module",
   "main": "./dist/mcp-main.js",
