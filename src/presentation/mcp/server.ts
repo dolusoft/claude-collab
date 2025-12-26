@@ -9,7 +9,6 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
-  ResourceUpdatedNotificationSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import type { HubClient } from '../../infrastructure/websocket/hub-client.js';
 import { registerJoinTool } from './tools/join.tool.js';
@@ -102,10 +101,8 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
 
   // Setup notification when questions arrive
   hubClient.events.onQuestion = async (question) => {
-    // Send resource updated notification to Claude
-    await server.sendResourceUpdated({
-      uri: 'inbox://questions',
-    });
+    // TODO: Send resource updated notification to Claude
+    // Need to check MCP SDK API for correct notification method
 
     // Log for debugging
     console.error(`[📬 New Question] From: ${question.from.displayName}`);
