@@ -176,14 +176,20 @@ export class HubClient {
     });
 
     // Wait for QUESTION_SENT confirmation
-    await this.waitForResponse(
+    const questionSent = await this.waitForResponse<{
+      type: 'QUESTION_SENT';
+      questionId: QuestionId;
+      requestId: string;
+    }>(
       (msg) => msg.type === 'QUESTION_SENT' && 'requestId' in msg && msg.requestId === requestId,
       5000
     );
 
-    // Wait for ANSWER
+    const questionId = questionSent.questionId;
+
+    // Wait for ANSWER with matching questionId
     const answer = await this.waitForResponse<AnswerMessage>(
-      (msg) => msg.type === 'ANSWER',
+      (msg) => msg.type === 'ANSWER' && msg.questionId === questionId,
       timeoutMs
     );
 
