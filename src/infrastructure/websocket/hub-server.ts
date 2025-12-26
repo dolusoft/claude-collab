@@ -30,6 +30,20 @@ import {
 } from './message-protocol.js';
 
 /**
+ * Log helper with timestamp
+ */
+function log(level: 'INFO' | 'ERROR' | 'WARN' | 'DEBUG', message: string, data?: unknown): void {
+  const timestamp = new Date().toISOString();
+  const prefix = `[${timestamp}] [HUB-${level}]`;
+
+  if (data) {
+    console.log(`${prefix} ${message}`, JSON.stringify(data, null, 2));
+  } else {
+    console.log(`${prefix} ${message}`);
+  }
+}
+
+/**
  * Client connection state
  */
 interface ClientConnection {
@@ -134,12 +148,12 @@ export class HubServer {
         });
 
         this.wss.on('error', (error) => {
-          console.error('Hub server error:', error);
+          log('ERROR', 'Hub server error', { error: error.message, stack: error.stack });
           reject(error);
         });
 
         this.wss.on('listening', () => {
-          console.log(`Hub server listening on ${host}:${port}`);
+          log('INFO', `Hub server started successfully`, { host, port });
           this.startHeartbeat();
           this.startTimeoutCheck();
           resolve();
@@ -175,7 +189,7 @@ export class HubServer {
 
         this.wss.close(() => {
           this.wss = null;
-          console.log('Hub server stopped');
+          log('INFO', 'Hub server stopped gracefully');
           resolve();
         });
       } else {
@@ -191,6 +205,8 @@ export class HubServer {
     };
     this.clients.set(ws, connection);
 
+    log('INFO', 'New client connected', { totalClients: this.clients.size });
+
     ws.on('message', async (data) => {
       await this.handleMessage(ws, data.toString());
     });
@@ -200,7 +216,7 @@ export class HubServer {
     });
 
     ws.on('error', (error) => {
-      console.error('Client connection error:', error);
+      log('ERROR', 'Client connection error', { error: error.message });
     });
   }
 
@@ -211,6 +227,11 @@ export class HubServer {
     try {
       const message = parseClientMessage(data);
       connection.lastPing = new Date();
+
+      log('DEBUG', `Received message from client`, {
+        type: message.type,
+        memberId: connection.memberId,
+      });
 
       switch (message.type) {
         case 'JOIN':
@@ -234,6 +255,10 @@ export class HubServer {
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      log('ERROR', 'Failed to handle message', {
+        error: errorMessage,
+        memberId: connection.memberId,
+      });
       this.send(ws, createErrorMessage('INVALID_MESSAGE', errorMessage));
     }
   }
@@ -245,6 +270,8 @@ export class HubServer {
     displayName: string
   ): Promise<void> {
     try {
+      log('INFO', 'Member attempting to join', { teamName, displayName });
+
       const result = await this.joinTeamUseCase.execute({ teamName, displayName });
 
       connection.memberId = result.memberId;
@@ -257,8 +284,16 @@ export class HubServer {
         member: memberInfo,
         memberCount: result.memberCount,
       });
+
+      log('INFO', 'Member joined successfully', {
+        memberId: result.memberId,
+        teamName,
+        displayName,
+        memberCount: result.memberCount,
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Join failed';
+      log('ERROR', 'Member join failed', { teamName, displayName, error: errorMessage });
       this.send(ws, createErrorMessage('JOIN_FAILED', errorMessage));
     }
   }
@@ -279,11 +314,18 @@ export class HubServer {
     message: { toTeam: string; content: string; format: 'plain' | 'markdown'; requestId: string }
   ): Promise<void> {
     if (!connection.memberId) {
+      log('WARN', 'ASK attempt without joining team', { toTeam: message.toTeam });
       this.send(ws, createErrorMessage('NOT_JOINED', 'Must join a team first', message.requestId));
       return;
     }
 
     try {
+      log('INFO', 'Question asked', {
+        fromMemberId: connection.memberId,
+        toTeam: message.toTeam,
+        contentPreview: message.content.substring(0, 50) + '...',
+      });
+
       const result = await this.askQuestionUseCase.execute({
         fromMemberId: connection.memberId,
         toTeamName: message.toTeam,
@@ -298,8 +340,19 @@ export class HubServer {
         status: result.status,
         requestId: message.requestId,
       });
+
+      log('INFO', 'Question sent successfully', {
+        questionId: result.questionId,
+        fromMemberId: connection.memberId,
+        toTeamId: result.toTeamId,
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Ask failed';
+      log('ERROR', 'Question failed', {
+        fromMemberId: connection.memberId,
+        toTeam: message.toTeam,
+        error: errorMessage,
+      });
       this.send(ws, createErrorMessage('ASK_FAILED', errorMessage, message.requestId));
     }
   }
@@ -310,19 +363,36 @@ export class HubServer {
     message: { questionId: QuestionId; content: string; format: 'plain' | 'markdown' }
   ): Promise<void> {
     if (!connection.memberId) {
+      log('WARN', 'REPLY attempt without joining team', { questionId: message.questionId });
       this.send(ws, createErrorMessage('NOT_JOINED', 'Must join a team first'));
       return;
     }
 
     try {
+      log('INFO', 'Reply received', {
+        fromMemberId: connection.memberId,
+        questionId: message.questionId,
+        contentPreview: message.content.substring(0, 50) + '...',
+      });
+
       await this.replyQuestionUseCase.execute({
         fromMemberId: connection.memberId,
         questionId: message.questionId,
         content: message.content,
         format: message.format,
       });
+
+      log('INFO', 'Reply delivered successfully', {
+        fromMemberId: connection.memberId,
+        questionId: message.questionId,
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Reply failed';
+      log('ERROR', 'Reply failed', {
+        fromMemberId: connection.memberId,
+        questionId: message.questionId,
+        error: errorMessage,
+      });
       this.send(ws, createErrorMessage('REPLY_FAILED', errorMessage));
     }
   }
@@ -371,10 +441,15 @@ export class HubServer {
   private async handleDisconnect(ws: WebSocket): Promise<void> {
     const connection = this.clients.get(ws);
     if (connection?.memberId && connection.teamId) {
+      log('INFO', 'Client disconnecting', {
+        memberId: connection.memberId,
+        teamId: connection.teamId,
+      });
       await this.removeMember(connection.memberId, connection.teamId);
       this.memberToWs.delete(connection.memberId);
     }
     this.clients.delete(ws);
+    log('INFO', 'Client disconnected', { totalClients: this.clients.size });
   }
 
   private async removeMember(memberId: MemberId, teamId: TeamId): Promise<void> {
@@ -400,13 +475,22 @@ export class HubServer {
 
   private async deliverQuestion(question: Question): Promise<void> {
     const team = await this.teamRepository.findById(question.toTeamId);
-    if (!team) return;
+    if (!team) {
+      log('WARN', 'Cannot deliver question - team not found', { toTeamId: question.toTeamId });
+      return;
+    }
 
     const fromMember = await this.memberRepository.findById(question.fromMemberId);
-    if (!fromMember) return;
+    if (!fromMember) {
+      log('WARN', 'Cannot deliver question - from member not found', {
+        fromMemberId: question.fromMemberId,
+      });
+      return;
+    }
 
     const memberInfo = await this.getMemberInfo(question.fromMemberId);
 
+    let deliveredCount = 0;
     for (const memberId of team.memberIds) {
       const ws = this.memberToWs.get(memberId);
       if (ws && ws.readyState === WebSocket.OPEN) {
@@ -418,8 +502,16 @@ export class HubServer {
           format: question.content.format,
           createdAt: question.createdAt.toISOString(),
         });
+        deliveredCount++;
       }
     }
+
+    log('INFO', 'Question delivered to team', {
+      questionId: question.id,
+      toTeamId: question.toTeamId,
+      teamSize: team.memberIds.size,
+      deliveredCount,
+    });
   }
 
   private async deliverAnswer(
@@ -428,7 +520,13 @@ export class HubServer {
     answeredByMemberId: MemberId
   ): Promise<void> {
     const ws = this.memberToWs.get(question.fromMemberId);
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      log('WARN', 'Cannot deliver answer - questioner not connected', {
+        questionId: question.id,
+        fromMemberId: question.fromMemberId,
+      });
+      return;
+    }
 
     const memberInfo = await this.getMemberInfo(answeredByMemberId);
 
@@ -439,6 +537,12 @@ export class HubServer {
       content: answer.content.text,
       format: answer.content.format,
       answeredAt: answer.createdAt.toISOString(),
+    });
+
+    log('INFO', 'Answer delivered', {
+      questionId: question.id,
+      answeredBy: answeredByMemberId,
+      deliveredTo: question.fromMemberId,
     });
   }
 
